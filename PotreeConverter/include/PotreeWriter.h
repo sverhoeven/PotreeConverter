@@ -41,8 +41,9 @@ public:
 	bool addCalledSinceLastFlush;
 	PotreeWriter *potreeWriter;
 	vector<Point> cache;
+	double scale;
 
-	PotreeWriterNode(PotreeWriter* potreeWriter, string name, string path, AABB aabb, float spacing, int level, int maxLevel);
+	PotreeWriterNode(PotreeWriter* potreeWriter, string name, string path, AABB aabb, float spacing, int level, int maxLevel, double scale);
 
 	~PotreeWriterNode(){
 		for(int i = 0; i < 8; i++){
@@ -70,7 +71,7 @@ public:
 private:
 
 	PointReader *createReader(string path);
-	PointWriter *createWriter(string path);
+	PointWriter *createWriter(string path, double scale);
 
 };
 
@@ -81,6 +82,7 @@ class PotreeWriter{
 public:
 
 	AABB aabb;
+	AABB tightAABB;
 	string path;
 	float spacing;
 	int maxLevel;
@@ -94,7 +96,7 @@ public:
 
 
 
-	PotreeWriter(string path, AABB aabb, float spacing, int maxLevel, OutputFormat outputFormat){
+	PotreeWriter(string path, AABB aabb, float spacing, int maxLevel, double scale, OutputFormat outputFormat){
 		this->path = path;
 		this->aabb = aabb;
 		this->spacing = spacing;
@@ -114,9 +116,10 @@ public:
 		cloudjs.boundingBox = aabb;
 		cloudjs.octreeDir = "data";
 		cloudjs.spacing = spacing;
-		cloudjs.version = "1.3";
+		cloudjs.version = "1.4";
+		cloudjs.scale = scale;
 
-		root = new PotreeWriterNode(this, "r", path, aabb, spacing, 0, maxLevel);
+		root = new PotreeWriterNode(this, "r", path, aabb, spacing, 0, maxLevel, scale);
 	}
 
 	~PotreeWriter(){
@@ -130,6 +133,8 @@ public:
 			return ".las";
 		}else if(outputFormat == OutputFormat::LAZ){
 			return ".laz";
+		}else if(outputFormat == OutputFormat::BINARY){
+			return ".bin";
 		}
 
 		return "";
@@ -141,6 +146,9 @@ public:
 		if(acceptedBy != NULL){
 			pointsInMemory++;
 			numAccepted++;
+
+			Vector3<double> position = p.position();
+			tightAABB.update(position);
 		}
 	}
 
@@ -157,6 +165,7 @@ public:
 		long long numPointsInMemory = 0;
 		long long numPointsInHierarchy = 0;
 		cloudjs.hierarchy = vector<CloudJS::Node>();
+		cloudjs.tightBoundingBox = tightAABB;
 		list<PotreeWriterNode*> stack;
 		stack.push_back(root);
 		while(!stack.empty()){
