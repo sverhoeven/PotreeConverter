@@ -8,10 +8,10 @@
 #
 #    docker run -u $UID -v $PWD:/data potreeconverter PotreeConverter -l 5 --output-format LAZ /data/input.laz
 #
-FROM ubuntu:12.04
+FROM ubuntu:14.04
 MAINTAINER Stefan Verhoeven <s.verhoeven@esciencecenter.nl
 VOLUME ["/data"]
-RUN echo 'deb http://ppa.launchpad.net/ubuntugis/ubuntugis-unstable/ubuntu precise main' > /etc/apt/sources.list.d/ubuntugis-unstable.list \
+RUN echo 'deb http://ppa.launchpad.net/ubuntugis/ubuntugis-unstable/ubuntu trusty main' > /etc/apt/sources.list.d/ubuntugis-unstable.list \
 && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 314DF160
 RUN apt-get update && apt-get install -y \
 libtiff-dev libgeotiff-dev libgdal1-dev \
