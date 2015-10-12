@@ -10,6 +10,8 @@
 #include "PotreeException.h"
 #include "PotreeWriter.h"
 #include "LASPointWriter.hpp"
+#include "BINPointWriter.hpp"
+#include "BINPointReader.hpp"
 #include "PlyPointReader.h"
 #include "XYZPointReader.hpp"
 
@@ -36,19 +38,9 @@ using boost::filesystem::directory_iterator;
 using boost::filesystem::is_regular_file;
 using boost::filesystem::path;
 
-struct Task{
-	string source;
-	string target;
-	AABB aabb;
+namespace Potree{
 
-	Task(string source, string target, AABB aabb){
-		this->source = source;
-		this->target = target;
-		this->aabb = aabb;
-	}
-};
-
-PointReader *PotreeConverter::createPointReader(string path){
+PointReader *PotreeConverter::createPointReader(string path, PointAttributes pointAttributes){
 	PointReader *reader = NULL;
 	if(boost::iends_with(path, ".las") || boost::iends_with(path, ".laz")){
 		reader = new LASPointReader(path);
@@ -67,28 +59,23 @@ PointReader *PotreeConverter::createPointReader(string path){
 		}
 
 		reader = new XYZPointReader(path, format, colorRange, intensityRange);
- 	}
+ 	}else if(boost::iends_with(path, ".bin")){
+		reader = new BINPointReader(path, aabb, scale, pointAttributes);
+	}
 
 	return reader;
 }
 
-PotreeConverter::PotreeConverter(
-	vector<string> sources, 
-	string workDir, 
-	float spacing, 
-	int diagonalFraction,
-	int maxDepth, 
-	string format, 
-	vector<double> colorRange, 
-	vector<double> intensityRange, 
-	double scale, 
-	OutputFormat outFormat,
-	vector<string> outputAttributes){
+PotreeConverter::PotreeConverter(string workDir, vector<string> sources){
+	this->workDir = workDir;
+	this->sources = sources;
+}
+
+void PotreeConverter::prepare(){
 
 	// if sources contains directories, use files inside the directory instead
 	vector<string> sourceFiles;
-	for(int i = 0; i < sources.size(); i++){
-		string source = sources[i];
+	for (const auto &source : sources) {
 		path pSource(source);
 		if(boost::filesystem::is_directory(pSource)){
 			boost::filesystem::directory_iterator it(pSource);
@@ -110,192 +97,208 @@ PotreeConverter::PotreeConverter(
 			sourceFiles.push_back(source);
 		}
 	}
-	
-
 	this->sources = sourceFiles;
-	this->workDir = workDir;
-	this->spacing = spacing;
-	this->maxDepth = maxDepth;
-	this->format = format;
-	this->colorRange = colorRange;
-	this->intensityRange = intensityRange;
-	this->scale = scale;
-	this->outputFormat = outFormat;
-	this->outputAttributes = outputAttributes;
-	this->diagonalFraction = diagonalFraction;
 
-	boost::filesystem::path dataDir(workDir + "/data");
-	boost::filesystem::path tempDir(workDir + "/temp");
-	fs::remove_all(dataDir);
-	fs::remove_all(tempDir);
-	boost::filesystem::create_directories(dataDir);
-	boost::filesystem::create_directories(tempDir);
-
-	cloudjs.octreeDir = "data";
-	cloudjs.spacing = spacing;
-	cloudjs.outputFormat = OutputFormat::LAS;
+	pointAttributes = PointAttributes();
+	pointAttributes.add(PointAttribute::POSITION_CARTESIAN);
+	for(const auto &attribute : outputAttributes){
+		if(attribute == "RGB"){
+			pointAttributes.add(PointAttribute::COLOR_PACKED);
+		}else if(attribute == "INTENSITY"){
+			pointAttributes.add(PointAttribute::INTENSITY);
+		}else if(attribute == "CLASSIFICATION"){
+			pointAttributes.add(PointAttribute::CLASSIFICATION);
+		}else if(attribute == "NORMAL"){
+			pointAttributes.add(PointAttribute::NORMAL_OCT16);
+		}
+	}
 }
 
+AABB PotreeConverter::calculateAABB(){
+	AABB aabb;
+	if(aabbValues.size() == 6){
+		Vector3<double> userMin(aabbValues[0],aabbValues[1],aabbValues[2]);
+		Vector3<double> userMax(aabbValues[3],aabbValues[4],aabbValues[5]);
+		aabb = AABB(userMin, userMax);
+	}else{
+		for(string source : sources){
 
-void PotreeConverter::convert(){
-	long long pointsProcessed = 0;
-	auto start = high_resolution_clock::now();
-
-	// convert XYZ sources to las sources
-	for(int i = 0; i < sources.size(); i++){
-		string source = sources[i];
-
-		if(boost::iends_with(source, ".txt") || boost::iends_with(source, ".xyz") || boost::iends_with(source, ".pts") || boost::iends_with(source, ".ptx")){
-			boost::filesystem::path lasDir(workDir + "/las");
-			boost::filesystem::create_directories(lasDir);
-			string dest = workDir + "/las/" + fs::path(source).stem().string() + ".las";
-
-			PointReader *reader = createPointReader(source);
-			LASPointWriter *writer = new LASPointWriter(dest, aabb, 0.001);
-			AABB aabb;
-
-			while(reader->readNextPoint()){
-				Point p = reader->getPoint();
-				writer->write(p);
-
-				Vector3<double> pos = p.position();
-				aabb.update(pos);
-				pointsProcessed++;
-
-				if (0 == pointsProcessed  % 1000000) {
-					auto end = high_resolution_clock::now();
-					long long duration = duration_cast<milliseconds>(end - start).count();
-					float seconds = duration / 1000.0f;
-					stringstream ssMessage;
-					ssMessage.imbue(std::locale(""));
-					ssMessage << "CONVERT-LAS: ";
-					ssMessage << pointsProcessed << " points processed; ";
-					ssMessage << seconds << " seconds passed";
-
-					cout << ssMessage.str() << endl;
-				}
-			}
-			writer->header->SetMax(aabb.max.x, aabb.max.y, aabb.max.z);
-			writer->header->SetMin(aabb.min.x, aabb.min.y, aabb.min.z);
-			writer->writer->SetHeader(*writer->header);
-			writer->writer->WriteHeader();
+			PointReader *reader = createPointReader(source, pointAttributes);
+			
+			AABB lAABB = reader->getAABB();
+			aabb.update(lAABB.min);
+			aabb.update(lAABB.max);
 
 			reader->close();
-			writer->close();
-
 			delete reader;
-			delete writer;
-
-			sources[i] = dest;
-		}
-		
-	}
-	cout << endl;
-
-
-	// calculate AABB and total number of points
-	AABB aabb;
-	long long numPoints = 0;
-	for(string source : sources){
-
-		PointReader *reader = createPointReader(source);
-		AABB lAABB = reader->getAABB();
-		 
-
-		aabb.update(lAABB.min);
-		aabb.update(lAABB.max);
-
-		numPoints += reader->numPoints();
-
-		reader->close();
-		delete reader;
-
-	}
-
-	if(scale == 0){
-		if(aabb.size.length() > 1000*1000){
-			scale = 0.1;
-		}else if(aabb.size.length() > 1000){
-			scale = 0.01;
-		}else if(aabb.size.length() > 1){
-			scale = 0.001;
-		}else{
-			scale = 0.0001;
 		}
 	}
 
+	return aabb;
+}
+
+void PotreeConverter::generatePage(string name){
+	string pagedir = this->workDir;
+	string templateSourcePath = "./resources/page_template/examples/viewer_template.html";
+	string templateTargetPath = pagedir + "/examples/" + name + ".html";
+
+	Potree::copyDir(fs::path("./resources/page_template"), fs::path(pagedir));
+	fs::remove(pagedir + "/examples/viewer_template.html");
+
+	{ // change viewer template
+		ifstream in( templateSourcePath );
+		ofstream out( templateTargetPath );
+
+		string line;
+		while(getline(in, line)){
+			if(line.find("<!-- INCLUDE SETTINGS HERE -->") != string::npos){
+				out << "\t<script src=\"./" << name << ".js\"></script>" << endl;
+			}else if((outputFormat == Potree::OutputFormat::LAS || outputFormat == Potree::OutputFormat::LAZ) && 
+				line.find("<!-- INCLUDE ADDITIONAL DEPENDENCIES HERE -->") != string::npos){
+				
+				out << "\t<script src=\"../libs/plasio/js/laslaz.js\"></script>" << endl;
+				out << "\t<script src=\"../libs/plasio/vendor/bluebird.js\"></script>" << endl;
+				out << "\t<script src=\"../build/js/laslaz.js\"></script>" << endl;
+			}else{
+				out << line << endl;
+			}
+			
+		}
+
+		in.close();
+		out.close();
+	}
+
+
+	{ // write settings
+		stringstream ssSettings;
+
+		ssSettings << "var sceneProperties = {" << endl;
+		ssSettings << "\tpath: \"" << "../resources/pointclouds/" << name << "/cloud.js\"," << endl;
+		ssSettings << "\tcameraPosition: null, 		// other options: cameraPosition: [10,10,10]," << endl;
+		ssSettings << "\tcameraTarget: null, 		// other options: cameraTarget: [0,0,0]," << endl;
+		ssSettings << "\tfov: 60, 					// field of view in degrees," << endl;
+		ssSettings << "\tsizeType: \"Adaptive\",	// other options: \"Fixed\", \"Attenuated\"" << endl;
+		ssSettings << "\tquality: null, 			// other options: \"Circles\", \"Interpolation\", \"Splats\"" << endl;
+		ssSettings << "\tmaterial: \"RGB\", 		// other options: \"Height\", \"Intensity\", \"Classification\"" << endl;
+		ssSettings << "\tpointLimit: 1,				// max number of points in millions" << endl;
+		ssSettings << "\tpointSize: 1,				// " << endl;
+		ssSettings << "\tnavigation: \"Orbit\",		// other options: \"Orbit\", \"Flight\"" << endl;
+		ssSettings << "\tuseEDL: false,				" << endl;
+		ssSettings << "};" << endl;
+
+	
+		ofstream fSettings;
+		fSettings.open(pagedir + "/examples/" + name + ".js", ios::out);
+		fSettings << ssSettings.str();
+		fSettings.close();
+	}
+}
+
+void PotreeConverter::convert(){
+	auto start = high_resolution_clock::now();
+
+	prepare();
+
+	long long pointsProcessed = 0;
+
+	AABB aabb = calculateAABB();
+	cout << "AABB: " << endl << aabb << endl;
+	aabb.makeCubic();
+	cout << "cubic AABB: " << endl << aabb << endl;
 
 	if (diagonalFraction != 0) {
 		spacing = (float)(aabb.size.length() / diagonalFraction);
 		cout << "spacing calculated from diagonal: " << spacing << endl;
 	}
-	cout << "Last level will have spacing:     " << spacing / pow(2, maxDepth - 1) << endl;
-	cout << endl;
 
-	cout << "AABB: " << endl << aabb << endl;
+	if(pageName.size() > 0){
+		generatePage(pageName);
+		workDir = workDir + "/resources/pointclouds/" + pageName;
+	}
 
-	aabb.makeCubic();
+	PotreeWriter *writer = NULL;
+	if(fs::exists(fs::path(this->workDir + "/cloud.js"))){
 
-	cout << "cubic AABB: " << endl << aabb << endl;
+		if(storeOption == StoreOption::ABORT_IF_EXISTS){
+			cout << "ABORTING CONVERSION: target already exists: " << this->workDir << "/cloud.js" << endl;
+			cout << "If you want to overwrite the existing conversion, specify --overwrite" << endl;
+			cout << "If you want add new points to the existing conversion, make sure the new points ";
+			cout << "are contained within the bounding box of the existing conversion and then specify --incremental" << endl;
 
-	cloudjs.boundingBox = aabb;
+			return;
+		}else if(storeOption == StoreOption::OVERWRITE){
+			fs::remove_all(workDir + "/data");
+			fs::remove_all(workDir + "/temp");
+			fs::remove(workDir + "/cloud.js");
+			writer = new PotreeWriter(this->workDir, aabb, spacing, maxDepth, scale, outputFormat, pointAttributes);
+		}else if(storeOption == StoreOption::INCREMENTAL){
+			writer = new PotreeWriter(this->workDir);
+			writer->loadStateFromDisk();
+		}
+	}else{
+		writer = new PotreeWriter(this->workDir, aabb, spacing, maxDepth, scale, outputFormat, pointAttributes);
+	}
 
-	start = high_resolution_clock::now();
+	if(writer == NULL){
+		return;
+	}
 
-	PotreeWriter writer(this->workDir, aabb, spacing, maxDepth, scale, outputFormat, outputAttributes);
-	//PotreeWriterLBL writer(this->workDir, aabb, spacing, maxDepth, outputFormat);
+	for (const auto &source : sources) {
+		cout << "READING:  " << source << endl;
 
-	pointsProcessed = 0;
-	for(int i = 0; i < sources.size(); i++){
-		string source = sources[i];
-		cout << "reading " << source << endl;
-
-		PointReader *reader = createPointReader(source);
+		PointReader *reader = createPointReader(source, pointAttributes);
 		while(reader->readNextPoint()){
 			pointsProcessed++;
-			//if((pointsProcessed%50) != 0){
-			//	continue;
-			//}
 
 			Point p = reader->getPoint();
-			writer.add(p);
+			writer->add(p);
 
-			//if((pointsProcessed % (1000*1000)) == 0){
-			//	//cout << (pointsProcessed / (1000*1000)) << "m points processed" << endl;
-			//	cout << "flushing" << endl;
-			//	writer.flush();
-			//}
-
-			if((pointsProcessed % (1000*1000)) == 0){
-				writer.flush();
+			if((pointsProcessed % (1'000'000)) == 0){
+				writer->processStore();
+				writer->waitUntilProcessed();
 
 				auto end = high_resolution_clock::now();
 				long long duration = duration_cast<milliseconds>(end-start).count();
-				float seconds = duration / 1000.0f;
+				float seconds = duration / 1'000.0f;
 
 				stringstream ssMessage;
 
 				ssMessage.imbue(std::locale(""));
 				ssMessage << "INDEXING: ";
 				ssMessage << pointsProcessed << " points processed; ";
-				ssMessage << writer.numAccepted << " points written; ";
+				ssMessage << writer->numAccepted << " points written; ";
 				ssMessage << seconds << " seconds passed";
 
 				cout << ssMessage.str() << endl;
-
-				//cout << (pointsProcessed / (1000*1000)) << "m points processed" << endl;
-				//cout << "duration: " << (duration / 1000.0f) << "s" << endl;
 			}
+			if((pointsProcessed % (10'000'000)) == 0){
+				cout << "FLUSHING: ";
+			
+				auto start = high_resolution_clock::now();
+			
+				writer->flush();
+			
+				auto end = high_resolution_clock::now();
+				long long duration = duration_cast<milliseconds>(end-start).count();
+				float seconds = duration / 1'000.0f;
+			
+				cout << seconds << "s" << endl;
+			}
+
+			//if(pointsProcessed >= 10'000'000){
+			//	break;
+			//}
 		}
-		writer.flush();
 		reader->close();
 		delete reader;
 	}
 	
 	cout << "closing writer" << endl;
-	writer.close();
+	writer->flush();
+	writer->close();
 
-	float percent = (float)writer.numAccepted / (float)pointsProcessed;
+	float percent = (float)writer->numAccepted / (float)pointsProcessed;
 	percent = percent * 100;
 
 	auto end = high_resolution_clock::now();
@@ -304,7 +307,9 @@ void PotreeConverter::convert(){
 	
 	cout << endl;
 	cout << "conversion finished" << endl;
-	cout << pointsProcessed << " points were processed and " << writer.numAccepted << " points ( " << percent << "% ) were written to the output. " << endl;
+	cout << pointsProcessed << " points were processed and " << writer->numAccepted << " points ( " << percent << "% ) were written to the output. " << endl;
 
 	cout << "duration: " << (duration / 1000.0f) << "s" << endl;
+}
+
 }

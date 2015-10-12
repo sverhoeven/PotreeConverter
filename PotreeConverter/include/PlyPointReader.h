@@ -24,9 +24,10 @@ using namespace boost::assign;
 using boost::split;
 using boost::is_any_of;
 
+namespace Potree{
+
 const int PLY_FILE_FORMAT_ASCII = 0;
 const int PLY_FILE_FORMAT_BINARY_LITTLE_ENDIAN = 1;
-
 
 struct PlyPropertyType{
 	string name;
@@ -170,9 +171,13 @@ public:
 			return false;
 		}
 		
-		float x = 0;
-		float y = 0;
-		float z = 0;
+		double x = 0;
+		double y = 0;
+		double z = 0;
+		float dummy;
+		float nx = 0;
+		float ny = 0;
+		float nz = 0;
 		unsigned char r = 0;
 		unsigned char g = 0;
 		unsigned char b = 0;
@@ -184,34 +189,54 @@ public:
 
 			vector<string> tokens;
 			split(tokens, line, is_any_of("\t "));
-			for(int i = 0; i < vertexElement.properties.size(); i++){
-				string token = tokens[i];
-				PlyProperty prop = vertexElement.properties[i];
+			int i = 0;
+			for(const auto &prop : vertexElement.properties){
+				string token = tokens[i++];
 				if(prop.name == "x" && prop.type.name == plyPropertyTypes["float"].name){
 					x = stof(token);
 				}else if(prop.name == "y" && prop.type.name == plyPropertyTypes["float"].name){
 					y = stof(token);
 				}else if(prop.name == "z" && prop.type.name == plyPropertyTypes["float"].name){
 					z = stof(token);
+				}else if(prop.name == "x" && prop.type.name == plyPropertyTypes["double"].name){
+					x = stod(token);
+				}else if(prop.name == "y" && prop.type.name == plyPropertyTypes["double"].name){
+					y = stod(token);
+				}else if(prop.name == "z" && prop.type.name == plyPropertyTypes["double"].name){
+					z = stod(token);
 				}else if(std::find(plyRedNames.begin(), plyRedNames.end(), prop.name) != plyRedNames.end() && prop.type.name == plyPropertyTypes["uchar"].name){
 					r = (unsigned char)stof(token);
 				}else if(std::find(plyGreenNames.begin(), plyGreenNames.end(), prop.name) != plyGreenNames.end() && prop.type.name == plyPropertyTypes["uchar"].name){
 					g = (unsigned char)stof(token);
 				}else if(std::find(plyBlueNames.begin(), plyBlueNames.end(), prop.name) != plyBlueNames.end() && prop.type.name == plyPropertyTypes["uchar"].name){
 					b = (unsigned char)stof(token);
+				}else if(prop.name == "nx" && prop.type.name == plyPropertyTypes["float"].name){
+					nx = stof(token);
+				}else if(prop.name == "ny" && prop.type.name == plyPropertyTypes["float"].name){
+					ny = stof(token);
+				}else if(prop.name == "nz" && prop.type.name == plyPropertyTypes["float"].name){
+					nz = stof(token);
 				}
 			}
 		}else if(format == PLY_FILE_FORMAT_BINARY_LITTLE_ENDIAN){
 			stream.read(buffer, pointByteSize);
 
 			int offset = 0;
-			for(int i = 0; i < vertexElement.properties.size(); i++){
-				PlyProperty prop = vertexElement.properties[i];
+			for(const auto &prop : vertexElement.properties){
 				if(prop.name == "x" && prop.type.name == plyPropertyTypes["float"].name){
-					memcpy(&x, (buffer+offset), prop.type.size);
+					memcpy(&dummy, (buffer+offset), prop.type.size);
+					x=dummy;
 				}else if(prop.name == "y" && prop.type.name == plyPropertyTypes["float"].name){
-					memcpy(&y, (buffer+offset), prop.type.size);
+					memcpy(&dummy, (buffer+offset), prop.type.size);
+					y=dummy;
 				}else if(prop.name == "z" && prop.type.name == plyPropertyTypes["float"].name){
+					memcpy(&dummy, (buffer+offset), prop.type.size);
+					z=dummy;
+				}else if(prop.name == "x" && prop.type.name == plyPropertyTypes["double"].name){
+					memcpy(&x, (buffer+offset), prop.type.size);
+				}else if(prop.name == "y" && prop.type.name == plyPropertyTypes["double"].name){
+					memcpy(&y, (buffer+offset), prop.type.size);
+				}else if(prop.name == "z" && prop.type.name == plyPropertyTypes["double"].name){
 					memcpy(&z, (buffer+offset), prop.type.size);
 				}else if(std::find(plyRedNames.begin(), plyRedNames.end(), prop.name) != plyRedNames.end() && prop.type.name == plyPropertyTypes["uchar"].name){
 					memcpy(&r, (buffer+offset), prop.type.size);
@@ -219,6 +244,12 @@ public:
 					memcpy(&g, (buffer+offset), prop.type.size);
 				}else if(std::find(plyBlueNames.begin(), plyBlueNames.end(), prop.name) != plyBlueNames.end() && prop.type.name == plyPropertyTypes["uchar"].name){
 					memcpy(&b, (buffer+offset), prop.type.size);
+				}else if(prop.name == "nx" && prop.type.name == plyPropertyTypes["float"].name){
+					memcpy(&nx, (buffer+offset), prop.type.size);
+				}else if(prop.name == "ny" && prop.type.name == plyPropertyTypes["float"].name){
+					memcpy(&ny, (buffer+offset), prop.type.size);
+				}else if(prop.name == "nz" && prop.type.name == plyPropertyTypes["float"].name){
+					memcpy(&nz, (buffer+offset), prop.type.size);
 				}
 				
 
@@ -228,6 +259,9 @@ public:
 		}
 
 		point = Point(x,y,z,r,g,b);
+		point.normal.x = nx;
+		point.normal.y = ny;
+		point.normal.z = nz;
 		pointsRead++;
 		return true;
 	}
@@ -244,8 +278,7 @@ public:
 			PlyPointReader *reader = new PlyPointReader(file);
 			while(reader->readNextPoint()){
 				Point p = reader->getPoint();
-				Vector3<double> position = p.position();
-				aabb->update(position);
+				aabb->update(p.position);
 			}
 
 			reader->close();
@@ -267,6 +300,6 @@ public:
 
 };
 
-
+}
 
 #endif

@@ -12,6 +12,8 @@ using std::ios;
 using std::string;
 using namespace boost::algorithm;
 
+namespace Potree{
+
 static const int INVALID_INTENSITY = 32767;
 
 std::map<string, AABB> PTXPointReader::aabbs = std::map<string, AABB>();
@@ -43,11 +45,10 @@ inline void skipline(fstream *stream) {
     getline(*stream, str);
 }
 
-bool assertd(fstream *stream, int i) {
+bool assertd(fstream &stream, size_t i) {
     vector<double> tokens;
     getlined(stream, tokens);
-    bool result = i == tokens.size();
-    return result;
+    return  i == tokens.size();
 }
 
 /**
@@ -82,26 +83,34 @@ PTXPointReader::PTXPointReader(string path) {
     this->currentFile = files.begin();
     this->stream = new fstream(*(this->currentFile), ios::in);
     this->currentChunk = 0;
-    skipline(this->stream);
+    skipline(*this->stream);
     loadChunk(this->stream, this->currentChunk, this->tr);
 }
 
 void PTXPointReader::scanForAABB() {
     // read bounding box
-    double x, y, z, minx, miny, minz, maxx, maxy, maxz, intensity;
+    double x(0), y(0), z(0);
+    // TODO: verify that this initial values are ok
+    double minx = std::numeric_limits<float>::max();
+    double miny = std::numeric_limits<float>::max();
+    double minz = std::numeric_limits<float>::max();
+    double maxx = -std::numeric_limits<float>::max();
+    double maxy = -std::numeric_limits<float>::max();
+    double maxz = -std::numeric_limits<float>::max();
+    double intensity(0);
     bool firstPoint = true;
     bool pleaseStop = false;
     long currentChunk = 0;
     long count = 0;
     double tr[16];
     vector<double> split;
-    for (int i = 0; i < files.size(); i++) {
-        fstream *stream=new fstream(files[i], ios::in);
+    for (const auto &file : files) {
+        fstream stream(file, ios::in);
         currentChunk = 0;
         getlined(stream, split);
         while (!pleaseStop) {
             if (1 == split.size()) {
-                if (!loadChunk(stream, currentChunk, tr)) {
+                if (!loadChunk(&stream, currentChunk, tr)) {
                     break;
                 }
             }
@@ -115,17 +124,17 @@ void PTXPointReader::scanForAABB() {
                     if (0.5 != intensity) {
                         Point p = transform(tr, x, y, z);
                         if (firstPoint) {
-                            maxx = minx = p.x;
-                            maxy = miny = p.y;
-                            maxz = minz = p.z;
+                            maxx = minx = p.position.x;
+                            maxy = miny = p.position.y;
+                            maxz = minz = p.position.z;
                             firstPoint = false;
                         } else {
-                            minx = p.x < minx ? p.x : minx;
-                            maxx = p.x > maxx ? p.x : maxx;
-                            miny = p.y < miny ? p.y : miny;
-                            maxy = p.y > maxy ? p.y : maxy;
-                            minz = p.z < minz ? p.z : minz;
-                            maxz = p.z > maxz ? p.z : maxz;
+                            minx = p.position.x < minx ? p.position.x : minx;
+                            maxx = p.position.x > maxx ? p.position.x : maxx;
+                            miny = p.position.y < miny ? p.position.y : miny;
+                            maxy = p.position.y > maxy ? p.position.y : maxy;
+                            minz = p.position.z < minz ? p.position.z : minz;
+                            maxz = p.position.z > maxz ? p.position.z : maxz;
                         }
                         count++;
                         if (0 == count % 1000000)
@@ -147,16 +156,17 @@ void PTXPointReader::scanForAABB() {
     counts[path] = count;
     AABB lAABB(Vector3<double>(minx, miny, minz), Vector3<double>(maxx, maxy, maxz));
     PTXPointReader::aabbs[path] = lAABB;
+
 }
 
 bool PTXPointReader::loadChunk(fstream *stream, long currentChunk, double tr[16]) {
     vector<double> split;
 
     // The first 5 lines should have respectively 1, 3, 3, 3, 3 numbers each.
-    if (!assertd(stream, 1) || !assertd(stream, 3) || !assertd(stream, 3) || !assertd(stream, 3) || !assertd(stream, 3))
+    if (!assertd(*stream, 1) || !assertd(*stream, 3) || !assertd(*stream, 3) || !assertd(*stream, 3) || !assertd(*stream, 3))
         return false;
 
-    getlined(stream, split);
+    getlined(*stream, split);
     if (4 != split.size()) {
         return false;
     };
@@ -165,7 +175,7 @@ bool PTXPointReader::loadChunk(fstream *stream, long currentChunk, double tr[16]
     tr[2] = split[2];
     tr[3] = split[3];
 
-    getlined(stream, split);
+    getlined(*stream, split);
     if (4 != split.size()) {
         return false;
     };
@@ -174,7 +184,7 @@ bool PTXPointReader::loadChunk(fstream *stream, long currentChunk, double tr[16]
     tr[6] = split[2];
     tr[7] = split[3];
 
-    getlined(stream, split);
+    getlined(*stream, split);
     if (4 != split.size()) {
         return false;
     };
@@ -183,7 +193,7 @@ bool PTXPointReader::loadChunk(fstream *stream, long currentChunk, double tr[16]
     tr[10] = split[2];
     tr[11] = split[3];
 
-    getlined(stream, split);
+    getlined(*stream, split);
     if (4 != split.size()) {
         return false;
     };
@@ -215,36 +225,37 @@ bool PTXPointReader::doReadNextPoint() {
         if (this->currentFile != files.end()) {
             this->stream = new fstream(*(this->currentFile), ios::in);
             this->currentChunk = 0;
-            skipline(stream);
+            skipline(*stream);
             loadChunk(stream, currentChunk, tr);
         } else {
             return false;
         }
     }
     vector<double> split;
-    getlined(stream, split);
+    getlined(*stream, split);
     if (1 == split.size()) {
         this->currentChunk++;
         loadChunk(stream, currentChunk, tr);
-        getlined(stream, split);
+        getlined(*stream, split);
     }
     auto size1 = split.size();
     if (size1 > 3) {
         this->p = transform(tr, split[0], split[1], split[2]);
         double intensity = split[3];
         this->p.intensity = (unsigned short)(65535.0 * intensity);
-        this->p.a = 0;
         if (4 == size1) {
-            this->p.r = (unsigned char)(intensity * 255.0);
-			this->p.g = (unsigned char)(intensity * 255.0);
-			this->p.b = (unsigned char)(intensity * 255.0);
+            this->p.color.x = (unsigned char)(intensity * 255.0);
+			this->p.color.y = (unsigned char)(intensity * 255.0);
+			this->p.color.z = (unsigned char)(intensity * 255.0);
         } else if (7 == size1) {
-            this->p.r = (unsigned char)(split[4]);
-            this->p.g = (unsigned char)(split[5]);
-            this->p.b = (unsigned char)(split[6]);
+            this->p.color.x = (unsigned char)(split[4]);
+            this->p.color.y = (unsigned char)(split[5]);
+            this->p.color.z = (unsigned char)(split[6]);
         }
     } else {
         this->p.intensity = INVALID_INTENSITY;
     }
     return true;
+}
+
 }

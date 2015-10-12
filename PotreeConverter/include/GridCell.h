@@ -10,7 +10,7 @@
 
 using std::vector;
 
-#define MAX_FLOAT std::numeric_limits<float>::max()
+namespace Potree{
 
 class SparseGrid;
 
@@ -25,13 +25,11 @@ public:
 
 	GridCell(SparseGrid *grid, GridIndex &index);
 
-	float minGap(const Vector3<double> &p);
-
-	float squaredMinGap(const Vector3<double> &p);
-
 	void add(Vector3<double> p);
 
-	float minGapAtArea(const Vector3<double> &p);
+	bool isDistant(const Vector3<double> &p, const double &squaredSpacing) const;
 };
+
+}
 
 #endif
