@@ -6,7 +6,7 @@
 #
 # To convert input.laz (in current working directory) into a potree resource in input.laz_converted/ sub-directory use:
 #
-#    docker run -u $UID -v $PWD:/data potreeconverter PotreeConverter -l 5 --output-format LAZ /data/input.laz
+#    docker run -u $UID -v $PWD:/data sverhoeven/potreeconverter PotreeConverter -l 5 --output-format LAZ /data/input.laz
 #
 FROM ubuntu:15.04
 MAINTAINER Stefan Verhoeven <s.verhoeven@esciencecenter.nl
